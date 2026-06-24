@@ -61,6 +61,24 @@
     background:#000c; border:1px solid var(--line); color:#fff; padding:10px 16px; border-radius:12px;
     font-size:13px; z-index:20; opacity:0; transition:opacity .25s; pointer-events:none; max-width:90%}
   .toast.show{opacity:1}
+
+  /* 참여자 목록 시트 */
+  .sheet{position:fixed; inset:0; z-index:30; display:none; align-items:flex-end; justify-content:center;
+    background:#0009; backdrop-filter:blur(2px)}
+  .sheet.show{display:flex}
+  .sheet-inner{background:var(--panel); border:1px solid var(--line); border-bottom:none;
+    border-radius:20px 20px 0 0; width:100%; max-width:440px;
+    padding:18px 18px calc(env(safe-area-inset-bottom) + 18px); max-height:70vh; overflow:auto;
+    animation:slideup .22s ease}
+  @keyframes slideup{from{transform:translateY(20px); opacity:.6}to{transform:translateY(0); opacity:1}}
+  .sheet-head{display:flex; align-items:center; justify-content:space-between;
+    font-weight:700; font-size:16px; margin-bottom:14px}
+  .sheet-close{color:var(--dim); cursor:pointer; font-size:18px; padding:4px 8px}
+  .people-list{display:flex; flex-direction:column; gap:4px}
+  .person{display:flex; align-items:center; gap:10px; font-size:15px; padding:9px 4px}
+  .person .pdot{width:8px; height:8px; border-radius:50%; background:var(--ok); flex:none}
+  .person .me{color:var(--accent); font-size:12px; margin-left:auto; font-weight:600}
+  .empty{color:var(--dim); font-size:14px; text-align:center; padding:24px 0}
 </style>
 </head>
 <body>
@@ -72,6 +90,11 @@
     <div class="field">
       <label for="room">방 이름 (가족끼리 똑같이 입력)</label>
       <input id="room" placeholder="예: choco-home-2026" autocomplete="off" autocapitalize="off">
+    </div>
+
+    <div class="field">
+      <label for="name">내 이름 (시청자 목록에 표시돼요)</label>
+      <input id="name" placeholder="예: 민서" autocomplete="off" maxlength="12">
     </div>
 
     <button class="btn btn-cam" onclick="goBroadcast()">📷 이 기기를 카메라로 (패드)</button>
@@ -99,9 +122,20 @@
   </div>
 
   <div class="bar bottom">
+    <span id="peopleBtn" class="pill" style="display:none" onclick="toggleSheet()">🧑‍🧑‍🧒‍🧒 <span id="peopleCount">참여자</span></span>
     <span id="switchBtn" class="pill" style="display:none" onclick="switchCamera()">🔄 카메라 전환</span>
     <div class="spacer"></div>
     <span id="endBtn" class="pill stop" onclick="endSession()">종료</span>
+  </div>
+</div>
+
+<div id="sheet" class="sheet" onclick="if(event.target===this)toggleSheet()">
+  <div class="sheet-inner">
+    <div class="sheet-head">
+      <span>지금 보고 있는 사람</span>
+      <span class="sheet-close" onclick="toggleSheet()">✕</span>
+    </div>
+    <div id="peopleList" class="people-list"></div>
   </div>
 </div>
 
@@ -146,6 +180,13 @@ const pcs = {};            // 송출자: viewerId -> RTCPeerConnection
 let myViewerRef = null;    // 시청자: 내 노드
 let viewerPc = null;       // 시청자: 단일 연결
 let joined = false;
+let myName = "", myId = "";
+const participants = {};    // id -> 이름
+
+// 시작 시 저장된 이름 채우기
+window.addEventListener("DOMContentLoaded", ()=>{
+  try{ $("name").value = localStorage.getItem("dogcam_name") || ""; }catch(e){}
+});
 
 function toast(msg){
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
@@ -156,6 +197,29 @@ function getRoom(){
   if(!r){ toast("방 이름을 입력하세요"); return null; }
   return r;
 }
+
+/* ---------- 참여자 목록 ---------- */
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function watchParticipants(){
+  const ref = db.ref(`cam/${room}/viewers`);
+  ref.on("child_added",   s=>{ participants[s.key] = s.child("name").val() || "익명"; renderPeople(); });
+  ref.on("child_changed", s=>{ participants[s.key] = s.child("name").val() || "익명"; renderPeople(); });
+  ref.on("child_removed", s=>{ delete participants[s.key]; renderPeople(); });
+}
+function renderPeople(){
+  const ids = Object.keys(participants);
+  $("peopleCount").textContent = `참여자 ${ids.length}`;
+  if(role === "cam") $("count").textContent = ids.length ? `👀 ${ids.length}명 시청 중` : "시청자 대기 중";
+  const list = $("peopleList");
+  if(!ids.length){ list.innerHTML = '<div class="empty">아직 아무도 보고 있지 않아요</div>'; return; }
+  list.innerHTML = ids.map(id=>{
+    const me = id === myId ? '<span class="me">나</span>' : "";
+    return `<div class="person"><span class="pdot"></span><span>${escapeHtml(participants[id])}</span>${me}</div>`;
+  }).join("");
+}
+function toggleSheet(){ $("sheet").classList.toggle("show"); }
 
 /* ---------- Wake Lock: 화면 꺼짐 방지 ---------- */
 async function acquireWakeLock(){
@@ -210,6 +274,9 @@ async function goBroadcast(){
   const viewersRef = db.ref(`cam/${room}/viewers`);
   viewersRef.on("child_added", s=> connectToViewer(s.key));
   viewersRef.on("child_removed", s=> dropViewer(s.key));
+
+  $("peopleBtn").style.display = "inline-block";
+  watchParticipants();
 }
 
 async function connectToViewer(id){
@@ -247,11 +314,7 @@ function dropViewer(id){
   updateCount();
 }
 
-function updateCount(){
-  if(role !== "cam") return;
-  const n = Object.values(pcs).filter(p=> p.connectionState==="connected").length;
-  $("count").textContent = n ? `👀 ${n}명 시청 중` : "시청자 대기 중";
-}
+function updateCount(){ if(role === "cam") renderPeople(); }
 
 async function switchCamera(){
   if(role !== "cam") return;
@@ -274,10 +337,14 @@ async function switchCamera(){
 /* ================= 시청자 (휴대폰) ================= */
 function goView(){
   const r = getRoom(); if(!r) return;
+  myName = ($("name").value.trim() || "익명").slice(0,12);
+  try{ localStorage.setItem("dogcam_name", myName); }catch(e){}
   room = r; role = "view";
   showStage();
   $("video").muted = false;
+  $("peopleBtn").style.display = "inline-block";
   setStatus("", "연결 중…");
+  watchParticipants();
 
   db.ref(`cam/${room}/broadcaster/online`).on("value", s=>{
     if(s.val() === true){
@@ -296,7 +363,8 @@ async function joinAsViewer(){
   $("waitText").textContent = "카메라에 연결하는 중…";
 
   myViewerRef = db.ref(`cam/${room}/viewers`).push();
-  myViewerRef.set({ ts:firebase.database.ServerValue.TIMESTAMP });
+  myId = myViewerRef.key;
+  myViewerRef.set({ ts:firebase.database.ServerValue.TIMESTAMP, name:myName });
   myViewerRef.onDisconnect().remove();
 
   viewerPc = new RTCPeerConnection(rtcConfig);

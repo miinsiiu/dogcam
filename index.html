@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>우리집 강아지캠</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<style>
+  :root{
+    --bg:#14110f; --panel:#1f1a16; --line:#352d27;
+    --txt:#f3ece3; --dim:#a89c8f; --accent:#e8853a; --ok:#5ec27a; --bad:#e05c5c;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0; height:100%; background:var(--bg); color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI",sans-serif}
+  body{display:flex; flex-direction:column; min-height:100%; min-height:100dvh}
+  .wrap{flex:1; display:flex; flex-direction:column; padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom)}
+
+  /* 역할 선택 화면 */
+  #home{flex:1; display:flex; flex-direction:column; justify-content:center; gap:14px; max-width:440px; margin:0 auto; width:100%}
+  .brand{display:flex; align-items:baseline; gap:10px; margin-bottom:4px}
+  .brand h1{font-size:26px; margin:0; letter-spacing:-.5px}
+  .brand .paw{font-size:24px}
+  .sub{color:var(--dim); font-size:14px; margin:0 0 8px}
+  .field{display:flex; flex-direction:column; gap:6px; margin-bottom:6px}
+  .field label{font-size:13px; color:var(--dim)}
+  input{background:var(--panel); border:1px solid var(--line); color:var(--txt);
+    border-radius:12px; padding:13px 14px; font-size:16px; outline:none}
+  input:focus{border-color:var(--accent)}
+  .btn{border:none; border-radius:14px; padding:16px; font-size:16px; font-weight:600;
+    cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px}
+  .btn-cam{background:var(--accent); color:#1a120b}
+  .btn-view{background:var(--panel); color:var(--txt); border:1px solid var(--line)}
+  .hint{font-size:12px; color:var(--dim); line-height:1.5; margin-top:2px}
+
+  /* 영상 화면 */
+  #stage{display:none; position:fixed; inset:0; background:#000}
+  video{width:100%; height:100%; object-fit:contain; background:#000}
+  .bar{position:absolute; left:0; right:0; display:flex; align-items:center; gap:10px;
+    padding:calc(env(safe-area-inset-top) + 12px) 16px 12px; z-index:5;
+    background:linear-gradient(#000a,#0000)}
+  .bar.bottom{top:auto; bottom:0; padding:12px 16px calc(env(safe-area-inset-bottom) + 12px);
+    background:linear-gradient(#0000,#000a)}
+  .status{display:flex; align-items:center; gap:8px; font-size:14px; font-weight:600}
+  .dot{width:9px; height:9px; border-radius:50%; background:var(--dim)}
+  .dot.live{background:var(--bad); box-shadow:0 0 0 0 #e05c5c80; animation:pulse 1.6s infinite}
+  .dot.on{background:var(--ok)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 #e05c5c66}70%{box-shadow:0 0 0 10px #e05c5c00}100%{box-shadow:0 0 0 0 #e05c5c00}}
+  .spacer{flex:1}
+  .pill{background:#ffffff1a; backdrop-filter:blur(8px); border:1px solid #ffffff22;
+    color:#fff; border-radius:999px; padding:9px 14px; font-size:14px; font-weight:600; cursor:pointer}
+  .pill.stop{background:#e05c5ccc; border-color:transparent}
+  .count{font-size:13px; color:#fff; opacity:.85}
+  .waiting{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:14px; color:var(--dim); text-align:center; padding:24px}
+  .waiting .ring{width:42px; height:42px; border:3px solid #ffffff22; border-top-color:var(--accent);
+    border-radius:50%; animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .toast{position:fixed; left:50%; bottom:calc(env(safe-area-inset-bottom) + 90px); transform:translateX(-50%);
+    background:#000c; border:1px solid var(--line); color:#fff; padding:10px 16px; border-radius:12px;
+    font-size:13px; z-index:20; opacity:0; transition:opacity .25s; pointer-events:none; max-width:90%}
+  .toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="home">
+    <div class="brand"><span class="paw">🐾</span><h1>우리집 강아지캠</h1></div>
+    <p class="sub">패드는 카메라가 되고, 휴대폰으로 어디서든 지켜봐요.</p>
+
+    <div class="field">
+      <label for="room">방 이름 (가족끼리 똑같이 입력)</label>
+      <input id="room" placeholder="예: choco-home-2026" autocomplete="off" autocapitalize="off">
+    </div>
+
+    <button class="btn btn-cam" onclick="goBroadcast()">📷 이 기기를 카메라로 (패드)</button>
+    <button class="btn btn-view" onclick="goView()">👀 강아지 보기 (휴대폰)</button>
+
+    <p class="hint">
+      • 방 이름은 아무도 못 맞힐 만큼 길게 정하세요. URL과 방 이름만 알면 누구나 볼 수 있어요.<br>
+      • 패드: 충전기 꽂고, 설정 → 디스플레이 → 자동 잠금 "안 함"으로 두면 더 안정적이에요.
+    </p>
+  </div>
+</div>
+
+<div id="stage">
+  <video id="video" autoplay playsinline muted></video>
+
+  <div class="bar">
+    <div class="status"><span id="dot" class="dot"></span><span id="statusText">연결 중…</span></div>
+    <div class="spacer"></div>
+    <span id="count" class="count"></span>
+  </div>
+
+  <div id="waiting" class="waiting">
+    <div class="ring"></div>
+    <div id="waitText">카메라에 연결하는 중…</div>
+  </div>
+
+  <div class="bar bottom">
+    <span id="switchBtn" class="pill" style="display:none" onclick="switchCamera()">🔄 카메라 전환</span>
+    <div class="spacer"></div>
+    <span id="endBtn" class="pill stop" onclick="endSession()">종료</span>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+/* ===== 1. 본인 Firebase 프로젝트 설정으로 교체하세요 ===== */
+const firebaseConfig = {
+  apiKey: "AIzaSyBoGvPyYrhQmIVGvf9ZRRXR020UkSiDhug",
+  authDomain: "dogdog-467af.firebaseapp.com",
+  databaseURL: "https://dogdog-467af-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "dogdog-467af",
+  storageBucket: "dogdog-467af.firebasestorage.app",
+  messagingSenderId: "244298519192",
+  appId: "1:244298519192:web:9ddf372c8f914544b4f6ed"
+};
+
+/* ===== 2. NAT 통과용 서버 (휴대폰 데이터망 ↔ 집 와이파이 연결엔 TURN이 거의 필수) =====
+   metered.ca 대시보드에서 발급받은 username / credential 을 아래 "여기에_..." 자리에 넣으세요.
+   (4군데 모두 같은 값) */
+const TURN_USER = "여기에_USERNAME";
+const TURN_PASS = "여기에_CREDENTIAL";
+
+const rtcConfig = {
+  iceServers: [
+    { urls: "stun:stun.relay.metered.ca:80" },
+    { urls: "turn:global.relay.metered.ca:80",               username: TURN_USER, credential: TURN_PASS },
+    { urls: "turn:global.relay.metered.ca:80?transport=tcp", username: TURN_USER, credential: TURN_PASS },
+    { urls: "turn:global.relay.metered.ca:443",              username: TURN_USER, credential: TURN_PASS },
+    { urls: "turns:global.relay.metered.ca:443?transport=tcp", username: TURN_USER, credential: TURN_PASS }
+  ]
+};
+/* ========================================================= */
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+const $ = id => document.getElementById(id);
+let room = "", role = "", localStream = null, wakeLock = null;
+let usingFront = false;
+const pcs = {};            // 송출자: viewerId -> RTCPeerConnection
+let myViewerRef = null;    // 시청자: 내 노드
+let viewerPc = null;       // 시청자: 단일 연결
+let joined = false;
+
+function toast(msg){
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._t); t._t = setTimeout(()=>t.classList.remove("show"), 2600);
+}
+function getRoom(){
+  const r = $("room").value.trim().toLowerCase().replace(/[.#$\[\]\/\s]/g,"-");
+  if(!r){ toast("방 이름을 입력하세요"); return null; }
+  return r;
+}
+
+/* ---------- Wake Lock: 화면 꺼짐 방지 ---------- */
+async function acquireWakeLock(){
+  try{
+    if("wakeLock" in navigator){
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", ()=>{});
+    }
+  }catch(e){}
+}
+document.addEventListener("visibilitychange", async ()=>{
+  if(document.visibilityState === "visible"){
+    if(role === "cam" && !wakeLock) await acquireWakeLock();
+    if(localStream){ try{ await $("video").play(); }catch(e){} }
+  }
+});
+
+/* ================= 송출자 (패드) ================= */
+async function goBroadcast(){
+  const r = getRoom(); if(!r) return;
+  room = r; role = "cam";
+  try{
+    localStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: usingFront ? "user" : "environment", width:{ideal:1280}, height:{ideal:720} },
+      audio: true
+    });
+  }catch(e){
+    toast("카메라 권한을 허용해야 해요"); return;
+  }
+  showStage();
+  $("video").muted = true;
+  $("video").srcObject = localStream;
+  $("switchBtn").style.display = "inline-block";
+  $("waiting").style.display = "none";
+  setStatus("live", "송출 중");
+  await acquireWakeLock();
+
+  const bRef = db.ref(`cam/${room}/broadcaster`);
+  // 새로 시작하면 이전 시청자 기록을 비워서 모두 새로 연결되게 함
+  await db.ref(`cam/${room}/viewers`).remove();
+  bRef.set({ online:true, ts:firebase.database.ServerValue.TIMESTAMP });
+  bRef.onDisconnect().update({ online:false });
+
+  // 재접속 시 online 상태 복구
+  db.ref(".info/connected").on("value", s=>{
+    if(s.val() === true){
+      bRef.update({ online:true, ts:firebase.database.ServerValue.TIMESTAMP });
+      bRef.onDisconnect().update({ online:false });
+    }
+  });
+
+  const viewersRef = db.ref(`cam/${room}/viewers`);
+  viewersRef.on("child_added", s=> connectToViewer(s.key));
+  viewersRef.on("child_removed", s=> dropViewer(s.key));
+}
+
+async function connectToViewer(id){
+  if(pcs[id]) return;
+  const pc = new RTCPeerConnection(rtcConfig);
+  pcs[id] = pc;
+  localStream.getTracks().forEach(t=> pc.addTrack(t, localStream));
+  const vRef = db.ref(`cam/${room}/viewers/${id}`);
+
+  pc.onicecandidate = e=>{ if(e.candidate) vRef.child("callerCandidates").push(e.candidate.toJSON()); };
+  pc.onconnectionstatechange = ()=>{
+    if(["failed","closed","disconnected"].includes(pc.connectionState)) dropViewer(id);
+    updateCount();
+  };
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  vRef.child("offer").set({ type:offer.type, sdp:offer.sdp });
+
+  vRef.child("answer").on("value", async s=>{
+    const ans = s.val();
+    if(ans && pc.signalingState !== "stable"){
+      try{ await pc.setRemoteDescription(new RTCSessionDescription(ans)); }catch(e){}
+    }
+  });
+  vRef.child("calleeCandidates").on("child_added", s=>{
+    try{ pc.addIceCandidate(new RTCIceCandidate(s.val())); }catch(e){}
+  });
+  updateCount();
+}
+
+function dropViewer(id){
+  if(pcs[id]){ try{ pcs[id].close(); }catch(e){} delete pcs[id]; }
+  db.ref(`cam/${room}/viewers/${id}`).off();
+  updateCount();
+}
+
+function updateCount(){
+  if(role !== "cam") return;
+  const n = Object.values(pcs).filter(p=> p.connectionState==="connected").length;
+  $("count").textContent = n ? `👀 ${n}명 시청 중` : "시청자 대기 중";
+}
+
+async function switchCamera(){
+  if(role !== "cam") return;
+  usingFront = !usingFront;
+  const newStream = await navigator.mediaDevices.getUserMedia({
+    video:{ facingMode: usingFront ? "user" : "environment", width:{ideal:1280}, height:{ideal:720} },
+    audio:true
+  });
+  const newTrack = newStream.getVideoTracks()[0];
+  Object.values(pcs).forEach(pc=>{
+    const sender = pc.getSenders().find(s=> s.track && s.track.kind==="video");
+    if(sender) sender.replaceTrack(newTrack);
+  });
+  localStream.getVideoTracks().forEach(t=> t.stop());
+  localStream.removeTrack(localStream.getVideoTracks()[0]);
+  localStream.addTrack(newTrack);
+  $("video").srcObject = localStream;
+}
+
+/* ================= 시청자 (휴대폰) ================= */
+function goView(){
+  const r = getRoom(); if(!r) return;
+  room = r; role = "view";
+  showStage();
+  $("video").muted = false;
+  setStatus("", "연결 중…");
+
+  db.ref(`cam/${room}/broadcaster/online`).on("value", s=>{
+    if(s.val() === true){
+      joinAsViewer();
+    }else{
+      $("waiting").style.display = "flex";
+      $("waitText").textContent = "카메라가 꺼져 있어요. 켜지면 자동으로 연결돼요.";
+      setStatus("", "대기 중");
+    }
+  });
+}
+
+async function joinAsViewer(){
+  if(joined) return;
+  joined = true;
+  $("waitText").textContent = "카메라에 연결하는 중…";
+
+  myViewerRef = db.ref(`cam/${room}/viewers`).push();
+  myViewerRef.set({ ts:firebase.database.ServerValue.TIMESTAMP });
+  myViewerRef.onDisconnect().remove();
+
+  viewerPc = new RTCPeerConnection(rtcConfig);
+  viewerPc.ontrack = e=>{
+    $("video").srcObject = e.streams[0];
+    $("waiting").style.display = "none";
+    setStatus("on", "연결됨");
+  };
+  viewerPc.onicecandidate = e=>{
+    if(e.candidate) myViewerRef.child("calleeCandidates").push(e.candidate.toJSON());
+  };
+  viewerPc.onconnectionstatechange = ()=>{
+    const st = viewerPc.connectionState;
+    if(st === "connected") setStatus("on", "연결됨");
+    if(["failed","disconnected"].includes(st)) restartViewer();
+  };
+
+  myViewerRef.child("offer").on("value", async s=>{
+    const offer = s.val();
+    if(offer && viewerPc.signalingState === "stable"){
+      await viewerPc.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await viewerPc.createAnswer();
+      await viewerPc.setLocalDescription(answer);
+      myViewerRef.child("answer").set({ type:answer.type, sdp:answer.sdp });
+    }
+  });
+  myViewerRef.child("callerCandidates").on("child_added", s=>{
+    try{ viewerPc.addIceCandidate(new RTCIceCandidate(s.val())); }catch(e){}
+  });
+}
+
+function restartViewer(){
+  setStatus("", "재연결 중…");
+  $("waiting").style.display = "flex";
+  $("waitText").textContent = "연결이 끊겨 다시 연결하는 중…";
+  cleanupViewer();
+  setTimeout(()=>{
+    db.ref(`cam/${room}/broadcaster/online`).get().then(s=>{
+      if(s.val() === true) joinAsViewer();
+    });
+  }, 1500);
+}
+
+function cleanupViewer(){
+  joined = false;
+  if(viewerPc){ try{ viewerPc.close(); }catch(e){} viewerPc = null; }
+  if(myViewerRef){ myViewerRef.off(); myViewerRef.onDisconnect().cancel(); myViewerRef.remove(); myViewerRef = null; }
+}
+
+/* ================= 공통 ================= */
+function showStage(){ $("home").parentElement.style.display="none"; $("stage").style.display="block"; }
+function setStatus(cls, txt){
+  $("dot").className = "dot" + (cls ? " "+cls : "");
+  $("statusText").textContent = txt;
+}
+
+function endSession(){
+  if(role === "cam"){
+    db.ref(`cam/${room}/broadcaster`).update({ online:false });
+    Object.keys(pcs).forEach(dropViewer);
+    if(localStream) localStream.getTracks().forEach(t=> t.stop());
+    if(wakeLock){ try{ wakeLock.release(); }catch(e){} wakeLock=null; }
+    db.ref(`cam/${room}/viewers`).remove();
+  }else{
+    cleanupViewer();
+    db.ref(`cam/${room}/broadcaster/online`).off();
+  }
+  location.reload();
+}
+window.addEventListener("beforeunload", ()=>{
+  if(role === "cam") db.ref(`cam/${room}/broadcaster`).update({ online:false });
+  if(role === "view") cleanupViewer();
+});
+</script>
+</body>
+</html>
